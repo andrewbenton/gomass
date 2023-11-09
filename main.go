@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"github.com/dustin/go-humanize"
 )
 
 func main() {
@@ -113,10 +115,19 @@ func mainE() error {
 		Package: binary,
 	}
 
-	for pkg, symbols := range packageGroups {
+	packages := lo.Keys(packageGroups)
+	sort.Strings(packages)
+
+	for _, pkg := range packages {
+		symbols := packageGroups[pkg]
+
 		if pkg == "" || len(symbols) < 1{
 			continue
 		}
+
+		sort.Slice(symbols, func(i, j int) bool {
+			return symbols[i].Func < symbols[j].Func
+		})
 
 		addToTree(root, 0, symbols[0].PackageChunks, symbols)
 	}
@@ -246,7 +257,7 @@ func renderUI(tree *packageTree) error {
 		for _, subPackage := range tree.Children {
 			sizePct := (float64(subPackage.AccumulatedSize) / totalSize) * 100
 
-			node := tview.NewTreeNode(fmt.Sprintf("pkg %s %4.2f", subPackage.Package, sizePct)).
+			node := tview.NewTreeNode(fmt.Sprintf("pkg %s | %5.2f%% | %s", subPackage.Package, sizePct, humanize.IBytes(uint64(subPackage.AccumulatedSize)))).
 				SetReference(subPackage).
 				SetSelectable(true).
 				SetColor(tcell.ColorGreen)
@@ -257,7 +268,7 @@ func renderUI(tree *packageTree) error {
 		for _, symbol := range tree.Symbols {
 			sizePct := (float64(symbol.Size) / totalSize) * 100
 
-			node := tview.NewTreeNode(fmt.Sprintf("sym %s %4.2f", symbol.Func, sizePct)).
+			node := tview.NewTreeNode(fmt.Sprintf("sym %s | %4.2f%% | %s", symbol.Func, sizePct, humanize.IBytes(uint64(symbol.Size)))).
 				SetReference(symbol).
 				SetSelectable(true).
 				SetColor(tcell.ColorYellow)
@@ -284,5 +295,9 @@ func renderUI(tree *packageTree) error {
 		}
 	})
 
-	return tview.NewApplication().SetRoot(treeView, true).Run()
+	app := tview.NewApplication().SetRoot(treeView, true)
+
+	app.EnableMouse(true)
+
+	return app.Run()
 }
