@@ -11,6 +11,8 @@ import (
 
 	"github.com/samber/lo"
 	"github.com/spf13/pflag"
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 )
 
 func main() {
@@ -21,9 +23,15 @@ func main() {
 }
 
 func mainE() error {
-	var binary string
+	var (
+		binary string
+		skipSymbols bool
+		format string
+	)
 
-	pflag.StringVarP(&binary, "binary", "b", "", "Set the binary that will be analyzed")
+	pflag.StringVarP(&binary, "binary", "b", "", "Set the binary that will be analyzed *required*")
+	pflag.BoolVarP(&skipSymbols, "skip-symbols", "s", false, "Skip emitting granular symbol data")
+	pflag.StringVarP(&format, "format", "f", "json", "Select the output format from [json]")
 	pflag.Parse()
 
 	binary = strings.TrimSpace(binary)
@@ -113,10 +121,21 @@ func mainE() error {
 		addToTree(root, 0, symbols[0].PackageChunks, symbols)
 	}
 
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
+	if skipSymbols {
+		root.dropSymbols()
+	}
 
-	return enc.Encode(root)
+	switch strings.ToLower(format) {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+
+		return enc.Encode(root)
+	case "ui":
+		return renderUI(root)
+	}
+
+	return nil
 }
 
 func addToTree(node *packageTree, index int, chunks []string, symbols []symbol) int64 {
@@ -167,6 +186,18 @@ type packageTree struct {
 	Children        map[string]*packageTree `json:"children,omitempty"`
 }
 
+func (s *packageTree) dropSymbols() {
+	s.Symbols = nil
+
+	for _, child := range s.Children {
+		if child == nil {
+			continue
+		}
+
+		child.dropSymbols()
+	}
+}
+
 type symbol struct {
 	Address       int64    `json:"address,omitempty"`
 	Size          int64    `json:"size,omitempty"`
@@ -200,4 +231,58 @@ type symbolSummary struct {
 	Size int64  `json:"size,omitempty"`
 	Type string `json:"type,omitempty"`
 	Func string `json:"func,omitempty"`
+}
+
+func renderUI(tree *packageTree) error {
+	totalSize := float64(tree.AccumulatedSize)
+
+	root := tview.NewTreeNode("bin " + tree.Package).SetColor(tcell.ColorRed)
+
+	treeView := tview.NewTreeView().
+		SetRoot(root).
+		SetCurrentNode(root)
+
+	add := func(target *tview.TreeNode, tree *packageTree) {
+		for _, subPackage := range tree.Children {
+			sizePct := (float64(subPackage.AccumulatedSize) / totalSize) * 100
+
+			node := tview.NewTreeNode(fmt.Sprintf("pkg %s %4.2f", subPackage.Package, sizePct)).
+				SetReference(subPackage).
+				SetSelectable(true).
+				SetColor(tcell.ColorGreen)
+
+			target.AddChild(node)
+		}
+
+		for _, symbol := range tree.Symbols {
+			sizePct := (float64(symbol.Size) / totalSize) * 100
+
+			node := tview.NewTreeNode(fmt.Sprintf("sym %s %4.2f", symbol.Func, sizePct)).
+				SetReference(symbol).
+				SetSelectable(true).
+				SetColor(tcell.ColorYellow)
+
+			target.AddChild(node)
+		}
+	}
+
+	add(root, tree)
+
+	treeView.SetSelectedFunc(func(node *tview.TreeNode) {
+		ref := node.GetReference()
+		if ref == nil {
+			return
+		}
+
+		children := node.GetChildren()
+		if len(children) == 0 {
+			if tree, ok := ref.(*packageTree); ok {
+				add(node, tree)
+			}
+		} else {
+			node.SetExpanded(!node.IsExpanded())
+		}
+	})
+
+	return tview.NewApplication().SetRoot(treeView, true).Run()
 }
