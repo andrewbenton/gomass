@@ -10,11 +10,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/samber/lo"
-	"github.com/spf13/pflag"
+	"github.com/dustin/go-humanize"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
-	"github.com/dustin/go-humanize"
+	"github.com/samber/lo"
+	"github.com/spf13/pflag"
 )
 
 func main() {
@@ -26,14 +26,14 @@ func main() {
 
 func mainE() error {
 	var (
-		binary string
+		binary      string
 		skipSymbols bool
-		format string
+		format      string
 	)
 
 	pflag.StringVarP(&binary, "binary", "b", "", "Set the binary that will be analyzed *required*")
 	pflag.BoolVarP(&skipSymbols, "skip-symbols", "s", false, "Skip emitting granular symbol data")
-	pflag.StringVarP(&format, "format", "f", "json", "Select the output format from [json]")
+	pflag.StringVarP(&format, "format", "f", "json", "Select the output format from [json, ui]")
 	pflag.Parse()
 
 	binary = strings.TrimSpace(binary)
@@ -94,12 +94,12 @@ func mainE() error {
 			if nameDotIdx > -1 {
 				ret.Package = name[0:(lastPathSep + nameDotIdx)]
 				ret.PackageChunks = strings.Split(ret.Package, "/")
-				ret.Func = name[(lastPathSep+nameDotIdx+1):]
+				ret.Func = name[(lastPathSep + nameDotIdx + 1):]
 			}
 		} else if packageDotIndex := strings.IndexRune(name, '.'); packageDotIndex > -1 {
 			ret.Package = name[0:packageDotIndex]
 			ret.PackageChunks = []string{ret.Package}
-			ret.Func = name[(packageDotIndex+1):]
+			ret.Func = name[(packageDotIndex + 1):]
 		} else {
 			ret.Func = name
 		}
@@ -121,7 +121,7 @@ func mainE() error {
 	for _, pkg := range packages {
 		symbols := packageGroups[pkg]
 
-		if pkg == "" || len(symbols) < 1{
+		if pkg == "" || len(symbols) < 1 {
 			continue
 		}
 
@@ -150,7 +150,7 @@ func mainE() error {
 }
 
 func addToTree(node *packageTree, index int, chunks []string, symbols []symbol) int64 {
-	if len(chunks) - index > 0 {
+	if len(chunks)-index > 0 {
 		if node.Children == nil {
 			node.Children = map[string]*packageTree{}
 		}
@@ -190,7 +190,7 @@ func addToTree(node *packageTree, index int, chunks []string, symbols []symbol) 
 
 type packageTree struct {
 	Package         string                  `json:"package,omitempty"`
-	packageChunks   []string
+	packageChunks   []string                `json:"-"`
 	PackageSize     int64                   `json:"package_size,omitempty"`
 	AccumulatedSize int64                   `json:"accumulated_size,omitempty"`
 	Symbols         []symbolSummary         `json:"symbols,omitempty"`
