@@ -29,11 +29,13 @@ func mainE() error {
 		binary      string
 		skipSymbols bool
 		format      string
+		order       string
 	)
 
 	pflag.StringVarP(&binary, "binary", "b", "", "Set the binary that will be analyzed *required*")
 	pflag.BoolVarP(&skipSymbols, "skip-symbols", "s", false, "Skip emitting granular symbol data")
 	pflag.StringVarP(&format, "format", "f", "json", "Select the output format from [json, ui]")
+	pflag.StringVarP(&order, "order", "o", "name", "Select the output format from [name, size]")
 	pflag.Parse()
 
 	binary = strings.TrimSpace(binary)
@@ -143,7 +145,7 @@ func mainE() error {
 
 		return enc.Encode(root)
 	case "ui":
-		return renderUI(root)
+		return renderUI(root, order)
 	}
 
 	return nil
@@ -209,6 +211,37 @@ func (s *packageTree) dropSymbols() {
 	}
 }
 
+func (s *packageTree) sortedChildren(by string) []*packageTree {
+	keys := lo.Values(s.Children)
+	switch by {
+	case "name":
+		sort.Slice(keys, func(i, j int) bool {
+			return keys[i].Package < keys[j].Package
+		})
+	case "size":
+		sort.Slice(keys, func(i, j int) bool {
+			return keys[i].AccumulatedSize > keys[j].AccumulatedSize
+		})
+	}
+
+	return keys
+}
+
+func (s *packageTree) sortedSymbols(by string) []symbolSummary {
+	switch by {
+	case "name":
+		sort.Slice(s.Symbols, func(i, j int) bool {
+			return s.Symbols[i].Func < s.Symbols[j].Func
+		})
+	case "size":
+		sort.Slice(s.Symbols, func(i, j int) bool {
+			return s.Symbols[i].Size > s.Symbols[j].Size
+		})
+	}
+
+	return s.Symbols
+}
+
 type symbol struct {
 	Address       int64    `json:"address,omitempty"`
 	Size          int64    `json:"size,omitempty"`
@@ -244,34 +277,55 @@ type symbolSummary struct {
 	Func string `json:"func,omitempty"`
 }
 
-func renderUI(tree *packageTree) error {
+func renderUI(tree *packageTree, sortBy string) error {
 	totalSize := float64(tree.AccumulatedSize)
 
-	root := tview.NewTreeNode("bin " + tree.Package).SetColor(tcell.ColorRed)
+	rootLabel := fmt.Sprintf("bin %s | %s", tree.Package, humanize.IBytes(uint64(tree.AccumulatedSize)))
+	root := tview.NewTreeNode(rootLabel).SetColor(tcell.ColorRed)
 
 	treeView := tview.NewTreeView().
 		SetRoot(root).
 		SetCurrentNode(root)
 
 	add := func(target *tview.TreeNode, tree *packageTree) {
-		for _, subPackage := range tree.Children {
+		children := tree.sortedChildren(sortBy)
+		for _, subPackage := range children {
 			sizePct := (float64(subPackage.AccumulatedSize) / totalSize) * 100
+			var node *tview.TreeNode
 
-			node := tview.NewTreeNode(fmt.Sprintf("pkg %s | %5.2f%% | %s", subPackage.Package, sizePct, humanize.IBytes(uint64(subPackage.AccumulatedSize)))).
-				SetReference(subPackage).
-				SetSelectable(true).
-				SetColor(tcell.ColorGreen)
+			switch sortBy {
+			case "name":
+				node = tview.NewTreeNode(fmt.Sprintf("pkg %s | %5.2f%% | %s", subPackage.Package, sizePct, humanize.IBytes(uint64(subPackage.AccumulatedSize)))).
+					SetReference(subPackage).
+					SetSelectable(true).
+					SetColor(tcell.ColorGreen)
+			case "size":
+				node = tview.NewTreeNode(fmt.Sprintf("pkg %5.2f%% | %s | %s", sizePct, humanize.IBytes(uint64(subPackage.AccumulatedSize)), subPackage.Package)).
+					SetReference(subPackage).
+					SetSelectable(true).
+					SetColor(tcell.ColorGreen)
+			}
 
 			target.AddChild(node)
 		}
 
-		for _, symbol := range tree.Symbols {
+		symbols := tree.sortedSymbols(sortBy)
+		for _, symbol := range symbols {
 			sizePct := (float64(symbol.Size) / totalSize) * 100
+			var node *tview.TreeNode
 
-			node := tview.NewTreeNode(fmt.Sprintf("sym %s | %4.2f%% | %s", symbol.Func, sizePct, humanize.IBytes(uint64(symbol.Size)))).
-				SetReference(symbol).
-				SetSelectable(true).
-				SetColor(tcell.ColorYellow)
+			switch sortBy {
+			case "name":
+				node = tview.NewTreeNode(fmt.Sprintf("sym %s | %4.2f%% | %s", symbol.Func, sizePct, humanize.IBytes(uint64(symbol.Size)))).
+					SetReference(symbol).
+					SetSelectable(true).
+					SetColor(tcell.ColorYellow)
+			case "size":
+				node = tview.NewTreeNode(fmt.Sprintf("sym %4.2f%% | %s | %s", sizePct, humanize.IBytes(uint64(symbol.Size)), symbol.Func)).
+					SetReference(symbol).
+					SetSelectable(true).
+					SetColor(tcell.ColorYellow)
+			}
 
 			target.AddChild(node)
 		}
